@@ -8,8 +8,8 @@ const Game = ({ walletAddress, onWalletChange }) => {
 	const [answer, setAnswer] = useState('');
 	const [result, setResult] = useState(null);
 	const [error, setError] = useState('');
-	const [betAmount, setBetAmount] = useState(10);
-	const [balance, setBalance] = useState(1000);
+	const [balance, setBalance] = useState(10);
+	const [consecutiveWins, setConsecutiveWins] = useState(0);
 	const [apiDetails, setApiDetails] = useState(null);
 	const timerRef = useRef(null);
 
@@ -35,6 +35,7 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		const walletResult = await contractAPI.connectWallet();
 		if (walletResult.success) {
 			setBalance(walletResult.balance);
+			setConsecutiveWins(walletResult.consecutiveWins || 0);
 		}
 	};
 
@@ -43,25 +44,20 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		setApiDetails(null);
 
 		try {
-			// Validate bet amount
-			if (betAmount > balance) {
-				throw new Error(`Insufficient balance. You have ${balance} USDT.`);
+			// Each game costs 1 USDT to play
+			if (balance < 1) {
+				throw new Error(`Insufficient balance. You need at least 1 USDT to play.`);
 			}
 
-			// Approve tokens first (simulated)
-			const approveResult = await contractAPI.approveTokens(betAmount);
-			if (!approveResult.success) {
-				throw new Error(`Failed to approve tokens: ${approveResult.error}`);
-			}
-
-			// Place bet (simulated)
-			const betResult = await contractAPI.placeBet(betAmount);
+			// Place bet (always costs 1 USDT)
+			const betResult = await contractAPI.placeBet(1);
 			if (!betResult.success) {
 				throw new Error(`Failed to place bet: ${betResult.error}`);
 			}
 
 			// Update balance
 			setBalance(betResult.newBalance);
+			setConsecutiveWins(betResult.consecutiveWins);
 
 			// Get current question
 			const questionResult = await contractAPI.getCurrentQuestion();
@@ -88,16 +84,36 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		}
 
 		if (answer.trim() === '') {
-			// If no answer provided, end the game
+			// If no answer provided, player loses
 			setResult({
 				success: false,
 				isWinner: false,
-				message: "Time's up! You didn't provide an answer."
+				message: "TIME'S UP! TOO SLOW!",
+				consecutiveWins: 0
 			});
+			setConsecutiveWins(0); // Reset consecutive wins
 			setGameState('RESULT');
 			return;
 		}
 
+		setGameState('ANSWER');
+		submitAnswer();
+	};
+
+	const handleSubmit = () => {
+		// Clear timer
+		if (timerRef.current) {
+			clearInterval(timerRef.current);
+			timerRef.current = null;
+		}
+
+		// Check if answer is empty
+		if (answer.trim() === '') {
+			setError("Please provide an answer before submitting.");
+			return;
+		}
+
+		// Submit answer
 		setGameState('ANSWER');
 		submitAnswer();
 	};
@@ -118,8 +134,9 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				answer
 			);
 
-			// Update balance
+			// Update balance and consecutive wins
 			setBalance(oracleResult.newBalance);
+			setConsecutiveWins(oracleResult.consecutiveWins);
 
 			// Store API details for display
 			if (oracleResult.apiResponse) {
@@ -135,57 +152,64 @@ const Game = ({ walletAddress, onWalletChange }) => {
 	};
 
 	const resetGame = () => {
-		setGameState('READY');
-		setQuestion(null);
-		setTimer(15);
-		setAnswer('');
-		setResult(null);
-		setError('');
-		setApiDetails(null);
+		if (balance <= 0) {
+			// Game over if no money left
+			setGameState('GAME_OVER');
+		} else {
+			setGameState('READY');
+			setQuestion(null);
+			setTimer(15);
+			setAnswer('');
+			setResult(null);
+			setError('');
+			setApiDetails(null);
+		}
 	};
 
 	const renderReady = () => (
 		<div className="flex flex-col items-center">
-			<div className="w-full text-right mb-4">
-				<span className="font-bold text-green-600">Balance: {balance} USDT</span>
+			<div className="w-full flex justify-between mb-4">
+				<span className="font-bold text-blue-600">Consecutive Wins: {consecutiveWins}</span>
+				<span className="font-bold text-green-600">Bank: ${balance}</span>
 			</div>
-			<h2 className="text-2xl font-bold mb-4">Ready to Play?</h2>
-			<p className="mb-4">
-				You'll be asked a question and have 15 seconds to provide an original answer.
+			<div className="border-b border-gray-300 w-full mb-4"></div>
+			<h2 className="text-2xl font-bold mb-4">Are You Basic?</h2>
+			<p className="mb-4 text-center">
+				Prove your humanity by giving non-basic responses.<br />
+				If you sound like AI or give nonsense, you're BASIC!
 			</p>
-			<div className="mb-4">
-				<label className="block text-gray-700 text-sm font-bold mb-2">
-					Bet Amount (USDT):
-					<select
-						className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-						value={betAmount}
-						onChange={(e) => setBetAmount(parseInt(e.target.value))}
-					>
-						<option value="10">10 USDT</option>
-						<option value="20">20 USDT</option>
-						<option value="50">50 USDT</option>
-						<option value="100">100 USDT</option>
-					</select>
-				</label>
+			<div className="mb-6 bg-gray-100 p-4 rounded-md w-full">
+				<h3 className="font-bold mb-2">Rules:</h3>
+				<ol className="list-decimal pl-5">
+					<li>Each round costs $1 to play</li>
+					<li>Win $10 for your first non-basic response</li>
+					<li>Win $20 for your second consecutive win</li>
+					<li>Win $50 for your third consecutive win or more</li>
+					<li>If your response is basic, you lose your consecutive wins</li>
+					<li>You have 15 seconds to answer each question</li>
+					<li>Game over when you run out of money</li>
+				</ol>
 			</div>
 			<button
 				className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded"
 				onClick={startGame}
-				disabled={betAmount > balance}
+				disabled={balance < 1}
 			>
-				Start Game
+				Start Game ($1)
 			</button>
-			{betAmount > balance && (
-				<p className="text-red-500 mt-2 text-sm">Insufficient balance for this bet</p>
+			{balance < 1 && (
+				<p className="text-red-500 mt-2 text-sm">Insufficient balance to play</p>
 			)}
 		</div>
 	);
 
 	const renderQuestion = () => (
 		<div className="flex flex-col items-center">
-			<div className="w-full text-right mb-4">
-				<span className="font-bold text-green-600">Balance: {balance} USDT</span>
+			<div className="w-full flex justify-between mb-4">
+				<span className="font-bold text-blue-600">Consecutive Wins: {consecutiveWins}</span>
+				<span className="font-bold text-green-600">Bank: ${balance}</span>
 			</div>
+			<div className="border-b border-gray-300 w-full mb-4"></div>
 			<div className="text-center">
 				<div className="mb-2 text-xl font-bold">Time Remaining: {timer} seconds</div>
 				<div className="w-full bg-gray-200 rounded-full h-2.5">
@@ -203,6 +227,13 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				value={answer}
 				onChange={(e) => setAnswer(e.target.value)}
 			></textarea>
+			<button
+				className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded"
+				onClick={handleSubmit}
+				disabled={answer.trim() === ''}
+			>
+				Submit Answer
+			</button>
 		</div>
 	);
 
@@ -216,15 +247,27 @@ const Game = ({ walletAddress, onWalletChange }) => {
 
 	const renderResult = () => (
 		<div className="flex flex-col items-center text-center">
-			<div className="w-full text-right mb-4">
-				<span className="font-bold text-green-600">Balance: {balance} USDT</span>
+			<div className="w-full flex justify-between mb-4">
+				<span className="font-bold text-blue-600">Consecutive Wins: {consecutiveWins}</span>
+				<span className="font-bold text-green-600">Bank: ${balance}</span>
 			</div>
-			<h2 className="text-3xl font-bold mb-6">
-				{result?.isWinner ? 'YOU WIN!' : 'YOU LOSE!'}
-			</h2>
-			<div className={`text-5xl font-bold mb-6 ${result?.isWinner ? 'text-green-500' : 'text-red-500'}`}>
-				{result?.isWinner ? '+' + result.winAmount : '0'} USDT
-			</div>
+			<div className="border-b border-gray-300 w-full mb-4"></div>
+
+			{result?.isWinner ? (
+				<>
+					<h2 className="text-3xl font-bold mb-6 text-green-500">NOT BASIC!</h2>
+					<div className="text-4xl font-bold mb-6 text-green-600">
+						+${result.winAmount}
+					</div>
+				</>
+			) : (
+				<>
+					<h2 className="text-3xl font-bold mb-2 text-red-500">Y O U  A R E  B A S I C !</h2>
+					<div className="p-1 border-t border-b border-red-500 w-full mb-6">
+						<p className="text-red-500">You lose this round.</p>
+					</div>
+				</>
+			)}
 
 			<div className="mb-6 w-full">
 				<h3 className="text-xl font-bold mb-2">Your Answer:</h3>
@@ -233,13 +276,20 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				{/* API Evaluation Results */}
 				{apiDetails && (
 					<div className="mt-4 border rounded p-4 bg-blue-50 text-left">
-						<h4 className="font-bold text-lg mb-2">API Evaluation:</h4>
-						<p className="mb-2">
-							<span className="font-semibold">Is Basic:</span> {apiDetails.isBasic ? "Yes" : "No"}
-						</p>
-						{apiDetails.score !== undefined && (
+						<h4 className="font-bold text-lg mb-2">Evaluation Results:</h4>
+						{apiDetails.final_score !== undefined && (
 							<p className="mb-2">
-								<span className="font-semibold">Score:</span> {apiDetails.score}
+								<span className="font-semibold">Final Score:</span> {apiDetails.final_score.toFixed(3)}
+							</p>
+						)}
+						{apiDetails.ai_detection_score !== undefined && (
+							<p className="mb-2">
+								<span className="font-semibold">AI Detection Score:</span> {apiDetails.ai_detection_score.toFixed(3)}
+							</p>
+						)}
+						{apiDetails.coherence_score !== undefined && (
+							<p className="mb-2">
+								<span className="font-semibold">Coherence Score:</span> {apiDetails.coherence_score.toFixed(3)}
 							</p>
 						)}
 						{apiDetails.explanation && (
@@ -267,7 +317,20 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
 				onClick={resetGame}
 			>
-				Play Again
+				{balance <= 0 ? "Game Over" : "Play Again"}
+			</button>
+		</div>
+	);
+
+	const renderGameOver = () => (
+		<div className="flex flex-col items-center text-center">
+			<h2 className="text-3xl font-bold mb-6">Game Over!</h2>
+			<p className="text-xl mb-8">You've run out of money!</p>
+			<button
+				className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded"
+				onClick={() => window.location.reload()}
+			>
+				Start New Game
 			</button>
 		</div>
 	);
@@ -282,6 +345,8 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				return renderAnswer();
 			case 'RESULT':
 				return renderResult();
+			case 'GAME_OVER':
+				return renderGameOver();
 			default:
 				return renderReady();
 		}

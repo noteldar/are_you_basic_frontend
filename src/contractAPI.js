@@ -33,6 +33,10 @@ const USDT_ADDRESS = "0xFABB0ac9d68B0B445fB7357272Ff202C5651694a";
 // API endpoint
 const API_ENDPOINT = "http://localhost:8000/evaluate";
 
+// Constants for game logic
+const GAME_COST = 1; // Cost to play one round
+const WIN_THRESHOLD = 0.5; // Score threshold to consider a win
+
 class ContractAPI {
 	constructor() {
 		this.provider = null;
@@ -41,11 +45,31 @@ class ContractAPI {
 		this.oracleContract = null;
 		this.tokenContract = null;
 		this.connected = false;
-		this.mockBalance = 1000; // Simulated USDT balance
+		this.mockBalance = 10; // Starting balance - 10 USDT as in Python code
 		this.mockWalletAddress = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
+		this.consecutiveWins = 0; // Track consecutive wins for prize scaling
 
 		// Track questions and answers for API calls
 		this.currentQuestion = null;
+
+		// Load all possible questions
+		this.questions = [
+			"What's your favorite book?",
+			"What's your favorite movie?",
+			"What's a hobby you enjoy?",
+			"What's your favorite food?",
+			"Where would you like to travel?",
+			"What's your dream job?",
+			"What's something you're proud of?",
+			"What's a skill you'd like to learn?",
+			"What's your favorite season and why?",
+			"What's your favorite way to relax?",
+			"What's something that everyone thinks is overrated?",
+			"What's your unpopular opinion?",
+			"What would you do with a million dollars?",
+			"If you could have any superpower, what would it be?",
+			"What's the most basic thing about modern culture?"
+		];
 	}
 
 	async connectWallet() {
@@ -61,7 +85,8 @@ class ContractAPI {
 			return {
 				success: true,
 				address: this.mockWalletAddress,
-				balance: this.mockBalance
+				balance: this.mockBalance,
+				consecutiveWins: this.consecutiveWins
 			};
 		} catch (error) {
 			console.error("Error in simulated wallet connection:", error);
@@ -73,18 +98,10 @@ class ContractAPI {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
-			// Return a random question from our list
-			const questions = [
-				"What's something that everyone thinks is overrated?",
-				"What's your unpopular opinion?",
-				"What would you do with a million dollars?",
-				"If you could have any superpower, what would it be?",
-				"What's the most basic thing about modern culture?"
-			];
-
-			const randomIndex = Math.floor(Math.random() * questions.length);
+			// Select a random question from our list
+			const randomIndex = Math.floor(Math.random() * this.questions.length);
 			const questionId = ethers.utils.id("question" + randomIndex);
-			const questionText = questions[randomIndex];
+			const questionText = this.questions[randomIndex];
 
 			// Store the current question for later API calls
 			this.currentQuestion = questionText;
@@ -124,14 +141,17 @@ class ContractAPI {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
+			// In Python implementation, each game costs exactly 1 unit
+			const gameCost = GAME_COST;
+
 			// Validate simulated balance
-			if (this.mockBalance < amount) {
-				throw new Error("Insufficient simulated USDT balance");
+			if (this.mockBalance < gameCost) {
+				throw new Error("Insufficient balance to play. You need at least 1 USDT.");
 			}
 
-			// Update simulated balance
-			this.mockBalance -= parseInt(amount);
-			console.log(`Simulated: Placed bet of ${amount} USDT. New balance: ${this.mockBalance}`);
+			// Update simulated balance - deduct game cost
+			this.mockBalance -= gameCost;
+			console.log(`Simulated: Placed bet of ${gameCost} USDT. New balance: ${this.mockBalance}`);
 
 			// Simulate transaction delay for realism
 			await new Promise(resolve => setTimeout(resolve, 800));
@@ -139,7 +159,8 @@ class ContractAPI {
 			return {
 				success: true,
 				tx: { hash: ethers.utils.id("bet" + Date.now()) },
-				newBalance: this.mockBalance
+				newBalance: this.mockBalance,
+				consecutiveWins: this.consecutiveWins
 			};
 		} catch (error) {
 			console.error("Error placing bet:", error);
@@ -175,8 +196,13 @@ class ContractAPI {
 			console.log("Calling evaluation API...");
 
 			// Create conversation format expected by the API
+			// Match the Python format with system message
 			const conversationData = {
 				conversation: [
+					{
+						role: "system",
+						content: "You are a helpful assistant."
+					},
 					{
 						role: "user",
 						content: this.currentQuestion
@@ -206,23 +232,41 @@ class ContractAPI {
 			console.log("API Response:", result);
 
 			// Determine if the answer is a winner based on the API response
-			// Assuming the API returns a score or an evaluation of some kind
-			// You might need to adjust this based on your actual API response format
-			const isWinner = result.isBasic === false; // Not basic means win
-			const score = result.score || 0;
+			// Using the same threshold as in Python: 0.5
+			const finalScore = result.final_score || 0;
+			const isWinner = finalScore >= WIN_THRESHOLD;
 
-			// Update mock balance if won
-			const winAmount = isWinner ? parseInt(10) : 0;
+			// Calculate winnings based on consecutive wins (match Python logic)
+			let winAmount = 0;
+
 			if (isWinner) {
-				this.mockBalance += winAmount * 2; // Return bet + winnings
-				console.log(`Won! New balance: ${this.mockBalance}`);
+				this.consecutiveWins += 1;
+
+				if (this.consecutiveWins === 1) {
+					winAmount = 10;
+				} else if (this.consecutiveWins === 2) {
+					winAmount = 20;
+				} else { // 3 or more
+					winAmount = 50;
+				}
+
+				// Add winnings to balance
+				this.mockBalance += winAmount;
+				console.log(`Won! ${winAmount} USDT. New balance: ${this.mockBalance}. Consecutive wins: ${this.consecutiveWins}`);
+			} else {
+				// Reset consecutive wins if lose
+				this.consecutiveWins = 0;
+				console.log(`Lost! Balance: ${this.mockBalance}. Consecutive wins reset.`);
 			}
 
 			return {
 				success: true,
 				isWinner,
 				winAmount,
-				score,
+				consecutiveWins: this.consecutiveWins,
+				finalScore,
+				aiDetectionScore: result.ai_detection_score || 0,
+				coherenceScore: result.coherence_score || 0,
 				apiResponse: result,
 				newBalance: this.mockBalance
 			};
@@ -232,24 +276,41 @@ class ContractAPI {
 			// Fallback to simulated response if API fails
 			console.log("Falling back to simulated evaluation...");
 
-			// Generate a "unique" answer score based on question and answer
-			const answerScore = ethers.utils.id(answer + questionId).substring(0, 10);
-			const numericScore = parseInt(answerScore, 16);
+			// Generate a random score between 0 and 1
+			const finalScore = Math.random();
+			const isWinner = finalScore >= WIN_THRESHOLD;
 
-			// 40% chance of winning
-			const isWinner = numericScore % 100 < 40;
+			// Calculate winnings based on consecutive wins (match Python logic)
+			let winAmount = 0;
 
-			// Update mock balance if won
-			const winAmount = isWinner ? parseInt(10) : 0;
 			if (isWinner) {
-				this.mockBalance += winAmount * 2; // Return bet + winnings
-				console.log(`Simulated fallback: Won! New balance: ${this.mockBalance}`);
+				this.consecutiveWins += 1;
+
+				if (this.consecutiveWins === 1) {
+					winAmount = 10;
+				} else if (this.consecutiveWins === 2) {
+					winAmount = 20;
+				} else { // 3 or more
+					winAmount = 50;
+				}
+
+				// Add winnings to balance
+				this.mockBalance += winAmount;
+				console.log(`Simulated fallback: Won! ${winAmount} USDT. New balance: ${this.mockBalance}. Consecutive wins: ${this.consecutiveWins}`);
+			} else {
+				// Reset consecutive wins if lose
+				this.consecutiveWins = 0;
+				console.log(`Simulated fallback: Lost! Balance: ${this.mockBalance}. Consecutive wins reset.`);
 			}
 
 			return {
 				success: true,
 				isWinner,
 				winAmount,
+				finalScore,
+				aiDetectionScore: Math.random(),
+				coherenceScore: Math.random(),
+				consecutiveWins: this.consecutiveWins,
 				fallback: true,
 				error: error.message,
 				newBalance: this.mockBalance
@@ -261,7 +322,8 @@ class ContractAPI {
 	async getBalance() {
 		return {
 			success: true,
-			balance: this.mockBalance
+			balance: this.mockBalance,
+			consecutiveWins: this.consecutiveWins
 		};
 	}
 }

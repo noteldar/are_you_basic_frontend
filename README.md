@@ -1,16 +1,28 @@
-# Are You Basic? - Blockchain Q&A Game
+# Are You Basic?
 
-A web application that integrates with a local API to evaluate answers in a blockchain-based Q&A game. Users receive virtual USDT, place bets, answer questions within a time limit, and win or lose based on the API's evaluation of their answers.
+A web application that challenges players to provide non-basic (original, creative) responses to questions. The app uses a local API to evaluate answers and determine if they're "basic" or not.
+
+## Game Concept
+
+Prove your humanity by giving non-basic responses. If you sound like AI or give generic responses, you're BASIC!
+
+## Game Rules
+
+1. Each round costs $1 to play
+2. Win $10 for your first non-basic response
+3. Win $20 for your second consecutive win
+4. Win $50 for your third consecutive win or more
+5. If your response is basic, you lose your consecutive wins
+6. You have 15 seconds to answer each question
+7. Game over when you run out of money
 
 ## Features
 
-- API integration with a local evaluation service (http://localhost:8000/evaluate)
-- Simulated blockchain interaction (no real cryptocurrency required)
-- Start with 1000 virtual USDT
-- Place bets with simulated USDT
-- Answer questions within a 15-second time limit
-- Win or lose based on API evaluation of your answers
-- Experience blockchain game mechanics with real answer evaluation
+- Integration with a local evaluation API (http://localhost:8000/evaluate)
+- 15-second timer for each question
+- Consecutive win tracking with increasing prizes
+- Score display showing final score, AI detection score, and coherence score
+- Simulated currency system
 
 ## Getting Started
 
@@ -50,6 +62,10 @@ The application makes POST requests to a local API endpoint at http://localhost:
 {
   "conversation": [
     {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
       "role": "user",
       "content": "The question text"
     },
@@ -61,37 +77,34 @@ The application makes POST requests to a local API endpoint at http://localhost:
 }
 ```
 
-The API should return a response that indicates whether the answer is "basic" or not, optionally with a score and explanation.
+The API should return a response with evaluation scores:
+```json
+{
+  "final_score": 0.75,
+  "ai_detection_score": 0.3,
+  "coherence_score": 0.9
+}
+```
+
+A final score of 0.5 or higher means the answer is NOT basic, and the player wins.
 
 ## How to Play
 
-1. The game starts with 1000 virtual USDT in your wallet
-2. Choose a bet amount from the dropdown menu
-3. Click "Start Game" to begin
-4. You'll be given a random question with 15 seconds to answer
-5. Type your answer before time runs out
-6. Your answer will be sent to the API for evaluation
-7. Results will be displayed, showing whether you win or lose
-8. Your virtual balance will be updated based on the result
+1. Start with $10 in your bank
+2. Each round costs $1 to play
+3. Answer the question within 15 seconds
+4. Your answer will be sent to the API for evaluation
+5. If your score is 0.5 or higher, you win!
+6. Consecutive wins increase your prize amounts
+7. Keep playing until you run out of money
 
-## Smart Contracts
+## Technical Implementation
 
-This frontend is designed to interact with the following smart contracts (currently simulated in the app):
+The frontend is a React application that simulates blockchain interactions but uses a real API for answer evaluation. The application has three main components:
 
-- `BasicGameContract.sol` - The main game contract that handles bets and player interactions
-- `GameOracle.sol` - The oracle that validates player answers
-- `IGameOracle.sol` - Interface for the game oracle
-
-## Simulation Mode
-
-The blockchain interactions are simulated, meaning:
-
-- No real cryptocurrency is used
-- No MetaMask or other wallet is required
-- All blockchain transactions are simulated
-- Your balance is reset to 1000 USDT each time you refresh the page
-
-However, the answer evaluation uses a real API for determining if an answer is "basic" or not.
+1. **ContractAPI.js**: Handles simulated blockchain and real API interactions
+2. **Game.js**: Manages game state, UI, and logic
+3. **App.js**: Main application wrapper
 
 ## License
 
