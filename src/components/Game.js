@@ -10,6 +10,7 @@ const Game = ({ walletAddress, onWalletChange }) => {
 	const [error, setError] = useState('');
 	const [betAmount, setBetAmount] = useState(10);
 	const [balance, setBalance] = useState(1000);
+	const [apiDetails, setApiDetails] = useState(null);
 	const timerRef = useRef(null);
 
 	useEffect(() => {
@@ -39,6 +40,7 @@ const Game = ({ walletAddress, onWalletChange }) => {
 
 	const startGame = async () => {
 		setError('');
+		setApiDetails(null);
 
 		try {
 			// Validate bet amount
@@ -110,7 +112,7 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				throw new Error(`Failed to submit answer: ${submitResult.error}`);
 			}
 
-			// Simulate oracle response
+			// Call the API to evaluate the answer
 			const oracleResult = await contractAPI.simulateOracleResponse(
 				question.questionId,
 				answer
@@ -118,6 +120,11 @@ const Game = ({ walletAddress, onWalletChange }) => {
 
 			// Update balance
 			setBalance(oracleResult.newBalance);
+
+			// Store API details for display
+			if (oracleResult.apiResponse) {
+				setApiDetails(oracleResult.apiResponse);
+			}
 
 			setResult(oracleResult);
 			setGameState('RESULT');
@@ -134,6 +141,7 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		setAnswer('');
 		setResult(null);
 		setError('');
+		setApiDetails(null);
 	};
 
 	const renderReady = () => (
@@ -200,8 +208,9 @@ const Game = ({ walletAddress, onWalletChange }) => {
 
 	const renderAnswer = () => (
 		<div className="flex flex-col items-center">
-			<h2 className="text-2xl font-bold mb-4">Submitting Your Answer...</h2>
+			<h2 className="text-2xl font-bold mb-4">Evaluating Your Answer...</h2>
 			<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+			<p className="mt-4 text-gray-600">Consulting the API to evaluate your response...</p>
 		</div>
 	);
 
@@ -216,10 +225,44 @@ const Game = ({ walletAddress, onWalletChange }) => {
 			<div className={`text-5xl font-bold mb-6 ${result?.isWinner ? 'text-green-500' : 'text-red-500'}`}>
 				{result?.isWinner ? '+' + result.winAmount : '0'} USDT
 			</div>
-			<div className="mb-6">
+
+			<div className="mb-6 w-full">
 				<h3 className="text-xl font-bold mb-2">Your Answer:</h3>
-				<p className="text-lg">{answer}</p>
+				<p className="text-lg mb-4 border p-4 rounded bg-gray-50">{answer}</p>
+
+				{/* API Evaluation Results */}
+				{apiDetails && (
+					<div className="mt-4 border rounded p-4 bg-blue-50 text-left">
+						<h4 className="font-bold text-lg mb-2">API Evaluation:</h4>
+						<p className="mb-2">
+							<span className="font-semibold">Is Basic:</span> {apiDetails.isBasic ? "Yes" : "No"}
+						</p>
+						{apiDetails.score !== undefined && (
+							<p className="mb-2">
+								<span className="font-semibold">Score:</span> {apiDetails.score}
+							</p>
+						)}
+						{apiDetails.explanation && (
+							<div className="mb-2">
+								<span className="font-semibold">Explanation:</span>
+								<p className="mt-1 text-sm">{apiDetails.explanation}</p>
+							</div>
+						)}
+					</div>
+				)}
+
+				{/* Fallback message if API failed */}
+				{result?.fallback && (
+					<div className="mt-4 border rounded p-4 bg-yellow-50 text-left">
+						<p className="text-sm text-yellow-700">
+							<span className="font-bold">Note:</span> API evaluation failed, using simulated response instead.
+							<br />
+							Error: {result.error}
+						</p>
+					</div>
+				)}
 			</div>
+
 			<button
 				className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
 				onClick={resetGame}

@@ -30,6 +30,9 @@ const GAME_CONTRACT_ADDRESS = "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199";
 const ORACLE_ADDRESS = "0xdD2FD4581271e230360230F9337D5c0430Bf44C0";
 const USDT_ADDRESS = "0xFABB0ac9d68B0B445fB7357272Ff202C5651694a";
 
+// API endpoint
+const API_ENDPOINT = "http://localhost:8000/evaluate";
+
 class ContractAPI {
 	constructor() {
 		this.provider = null;
@@ -40,6 +43,9 @@ class ContractAPI {
 		this.connected = false;
 		this.mockBalance = 1000; // Simulated USDT balance
 		this.mockWalletAddress = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
+
+		// Track questions and answers for API calls
+		this.currentQuestion = null;
 	}
 
 	async connectWallet() {
@@ -78,11 +84,15 @@ class ContractAPI {
 
 			const randomIndex = Math.floor(Math.random() * questions.length);
 			const questionId = ethers.utils.id("question" + randomIndex);
+			const questionText = questions[randomIndex];
+
+			// Store the current question for later API calls
+			this.currentQuestion = questionText;
 
 			return {
 				success: true,
 				questionId,
-				questionText: questions[randomIndex]
+				questionText
 			};
 		} catch (error) {
 			console.error("Error getting current question:", error);
@@ -158,34 +168,93 @@ class ContractAPI {
 		}
 	}
 
-	// For demo purposes, simulate the oracle's response
+	// Call the evaluation API to determine if the answer is a winner
 	async simulateOracleResponse(questionId, answer) {
-		// In a real app, this would be handled by the oracle service
-		// For this demo, we'll just simulate a win/lose response
+		try {
+			// The real API call to evaluate the answer
+			console.log("Calling evaluation API...");
 
-		// Generate a "unique" answer score based on question and answer
-		const answerScore = ethers.utils.id(answer + questionId).substring(0, 10);
-		const numericScore = parseInt(answerScore, 16);
+			// Create conversation format expected by the API
+			const conversationData = {
+				conversation: [
+					{
+						role: "user",
+						content: this.currentQuestion
+					},
+					{
+						role: "assistant",
+						content: answer
+					}
+				]
+			};
 
-		// 40% chance of winning
-		const isWinner = numericScore % 100 < 40;
+			// Make the API call to the local server
+			const response = await fetch(API_ENDPOINT, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify(conversationData)
+			});
 
-		// Simulate oracle processing time
-		await new Promise(resolve => setTimeout(resolve, 1500));
+			if (!response.ok) {
+				throw new Error(`API response error: ${response.status}`);
+			}
 
-		// Update mock balance if won
-		const winAmount = isWinner ? parseInt(10) : 0;
-		if (isWinner) {
-			this.mockBalance += winAmount * 2; // Return bet + winnings
-			console.log(`Simulated: Won! New balance: ${this.mockBalance}`);
+			// Parse the API response
+			const result = await response.json();
+			console.log("API Response:", result);
+
+			// Determine if the answer is a winner based on the API response
+			// Assuming the API returns a score or an evaluation of some kind
+			// You might need to adjust this based on your actual API response format
+			const isWinner = result.isBasic === false; // Not basic means win
+			const score = result.score || 0;
+
+			// Update mock balance if won
+			const winAmount = isWinner ? parseInt(10) : 0;
+			if (isWinner) {
+				this.mockBalance += winAmount * 2; // Return bet + winnings
+				console.log(`Won! New balance: ${this.mockBalance}`);
+			}
+
+			return {
+				success: true,
+				isWinner,
+				winAmount,
+				score,
+				apiResponse: result,
+				newBalance: this.mockBalance
+			};
+		} catch (error) {
+			console.error("Error calling evaluation API:", error);
+
+			// Fallback to simulated response if API fails
+			console.log("Falling back to simulated evaluation...");
+
+			// Generate a "unique" answer score based on question and answer
+			const answerScore = ethers.utils.id(answer + questionId).substring(0, 10);
+			const numericScore = parseInt(answerScore, 16);
+
+			// 40% chance of winning
+			const isWinner = numericScore % 100 < 40;
+
+			// Update mock balance if won
+			const winAmount = isWinner ? parseInt(10) : 0;
+			if (isWinner) {
+				this.mockBalance += winAmount * 2; // Return bet + winnings
+				console.log(`Simulated fallback: Won! New balance: ${this.mockBalance}`);
+			}
+
+			return {
+				success: true,
+				isWinner,
+				winAmount,
+				fallback: true,
+				error: error.message,
+				newBalance: this.mockBalance
+			};
 		}
-
-		return {
-			success: true,
-			isWinner,
-			winAmount: winAmount,
-			newBalance: this.mockBalance
-		};
 	}
 
 	// Get current balance
