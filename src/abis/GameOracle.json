@@ -1,0 +1,219 @@
+{
+	"abi": [
+		{
+			"inputs": [
+				{
+					"internalType": "address",
+					"name": "_gameContract",
+					"type": "address"
+				}
+			],
+			"stateMutability": "nonpayable",
+			"type": "constructor"
+		},
+		{
+			"inputs": [],
+			"name": "currentQuestionHash",
+			"outputs": [
+				{
+					"internalType": "bytes32",
+					"name": "",
+					"type": "bytes32"
+				}
+			],
+			"stateMutability": "view",
+			"type": "function"
+		},
+		{
+			"inputs": [],
+			"name": "currentQuestionId",
+			"outputs": [
+				{
+					"internalType": "bytes32",
+					"name": "",
+					"type": "bytes32"
+				}
+			],
+			"stateMutability": "view",
+			"type": "function"
+		},
+		{
+			"inputs": [],
+			"name": "gameContract",
+			"outputs": [
+				{
+					"internalType": "contract BasicGameContract",
+					"name": "",
+					"type": "address"
+				}
+			],
+			"stateMutability": "view",
+			"type": "function"
+		},
+		{
+			"inputs": [],
+			"name": "getCurrentQuestion",
+			"outputs": [
+				{
+					"internalType": "bytes32",
+					"name": "questionId",
+					"type": "bytes32"
+				},
+				{
+					"internalType": "bytes32",
+					"name": "questionHash",
+					"type": "bytes32"
+				}
+			],
+			"stateMutability": "view",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "bytes32",
+					"name": "_questionId",
+					"type": "bytes32"
+				},
+				{
+					"internalType": "address",
+					"name": "_player",
+					"type": "address"
+				}
+			],
+			"name": "getPlayerAnswer",
+			"outputs": [
+				{
+					"internalType": "bytes32",
+					"name": "",
+					"type": "bytes32"
+				}
+			],
+			"stateMutability": "view",
+			"type": "function"
+		},
+		{
+			"inputs": [],
+			"name": "owner",
+			"outputs": [
+				{
+					"internalType": "address",
+					"name": "",
+					"type": "address"
+				}
+			],
+			"stateMutability": "view",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "bytes32",
+					"name": "_questionId",
+					"type": "bytes32"
+				},
+				{
+					"internalType": "address",
+					"name": "_player",
+					"type": "address"
+				},
+				{
+					"internalType": "bytes32",
+					"name": "_answerHash",
+					"type": "bytes32"
+				}
+			],
+			"name": "requestValidation",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		},
+		{
+			"inputs": [],
+			"name": "renounceOwnership",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "bytes32",
+					"name": "_questionId",
+					"type": "bytes32"
+				},
+				{
+					"internalType": "bytes32",
+					"name": "_correctAnswerHash",
+					"type": "bytes32"
+				}
+			],
+			"name": "resolveWithAnswer",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "bytes32",
+					"name": "_questionId",
+					"type": "bytes32"
+				},
+				{
+					"internalType": "address",
+					"name": "_winner",
+					"type": "address"
+				}
+			],
+			"name": "resolveWithWinner",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "address",
+					"name": "_newGameContract",
+					"type": "address"
+				}
+			],
+			"name": "setGameContract",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "bytes32",
+					"name": "_questionId",
+					"type": "bytes32"
+				},
+				{
+					"internalType": "bytes32",
+					"name": "_questionHash",
+					"type": "bytes32"
+				}
+			],
+			"name": "setQuestion",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		},
+		{
+			"inputs": [
+				{
+					"internalType": "address",
+					"name": "newOwner",
+					"type": "address"
+				}
+			],
+			"name": "transferOwnership",
+			"outputs": [],
+			"stateMutability": "nonpayable",
+			"type": "function"
+		}
+	]
+}

@@ -1,36 +1,14 @@
 import { ethers } from 'ethers';
+import BasicGameContractABI from './abis/BasicGameContract.json';
+import GameOracleABI from './abis/GameOracle.json';
+import USDTTokenABI from './abis/TestUSDT.json';
 
-// ABI for the BasicGameContract
-const gameABI = [
-	"function placeBet(uint256 _betAmount) external",
-	"function submitAnswer(bytes32 _answerHash) external",
-	"function getGameState() external view returns (uint8)",
-	"function getPlayers() external view returns (address[])",
-	"function currentQuestionId() external view returns (bytes32)",
-	"event GameStarted(bytes32 indexed questionId)",
-	"event PlayerJoined(address indexed player, uint256 betAmount)",
-	"event AnswerSubmitted(address indexed player, bytes32 answerHash)",
-	"event GameCompleted(address indexed winner, uint256 winnings, uint256 fee)"
-];
+// Deployed contract addresses from Hardhat deployment
+const GAME_CONTRACT_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0";
+const ORACLE_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+const USDT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
-// ABI for the GameOracle
-const oracleABI = [
-	"function getCurrentQuestion() external view returns (bytes32 questionId, bytes32 questionHash)"
-];
-
-// Simulated USDT token ABI
-const tokenABI = [
-	"function approve(address spender, uint256 amount) external returns (bool)",
-	"function balanceOf(address account) external view returns (uint256)",
-	"function allowance(address owner, address spender) external view returns (uint256)"
-];
-
-// Mock contract addresses - replace with actual addresses when deploying
-const GAME_CONTRACT_ADDRESS = "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199";
-const ORACLE_ADDRESS = "0xdD2FD4581271e230360230F9337D5c0430Bf44C0";
-const USDT_ADDRESS = "0xFABB0ac9d68B0B445fB7357272Ff202C5651694a";
-
-// API endpoint
+// API endpoint for answer evaluation
 const API_ENDPOINT = "http://localhost:8000/evaluate";
 
 // Constants for game logic
@@ -73,23 +51,51 @@ class ContractAPI {
 	}
 
 	async connectWallet() {
-		// Simulate wallet connection without MetaMask
 		try {
-			// Create a simulated provider and signer
-			this.provider = new ethers.providers.JsonRpcProvider();
-			this.connected = true;
+			// Connect to actual MetaMask wallet
+			if (window.ethereum) {
+				await window.ethereum.request({ method: 'eth_requestAccounts' });
 
-			// Simulate a successful connection
-			console.log("Simulated wallet connected:", this.mockWalletAddress);
+				this.provider = new ethers.providers.Web3Provider(window.ethereum);
+				this.signer = this.provider.getSigner();
+				const address = await this.signer.getAddress();
 
-			return {
-				success: true,
-				address: this.mockWalletAddress,
-				balance: this.mockBalance,
-				consecutiveWins: this.consecutiveWins
-			};
+				// Initialize contract instances
+				this.gameContract = new ethers.Contract(
+					GAME_CONTRACT_ADDRESS,
+					BasicGameContractABI.abi,
+					this.signer
+				);
+
+				this.oracleContract = new ethers.Contract(
+					ORACLE_ADDRESS,
+					GameOracleABI.abi,
+					this.signer
+				);
+
+				this.tokenContract = new ethers.Contract(
+					USDT_ADDRESS,
+					USDTTokenABI.abi,
+					this.signer
+				);
+
+				this.connected = true;
+
+				// Get token balance
+				const balance = await this.tokenContract.balanceOf(address);
+				const formattedBalance = ethers.utils.formatUnits(balance, 6); // USDT has 6 decimals
+
+				return {
+					success: true,
+					address,
+					balance: parseFloat(formattedBalance),
+					consecutiveWins: this.consecutiveWins
+				};
+			} else {
+				throw new Error("Ethereum wallet not found. Please install MetaMask.");
+			}
 		} catch (error) {
-			console.error("Error in simulated wallet connection:", error);
+			console.error("Error connecting wallet:", error);
 			return { success: false, error: error.message };
 		}
 	}
@@ -98,12 +104,18 @@ class ContractAPI {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
-			// Select a random question from our list
-			const randomIndex = Math.floor(Math.random() * this.questions.length);
-			const questionId = ethers.utils.id("question" + randomIndex);
-			const questionText = this.questions[randomIndex];
+			// Get current question from oracle contract
+			const [questionId, questionHash] = await this.oracleContract.getCurrentQuestion();
 
-			// Store the current question for later API calls
+			// For a real implementation, you'd store a mapping of question IDs to question text
+			// For this demo, we can use predefined questions or fetch them from an API
+
+			// Example - fetch question text from backend API
+			const response = await fetch(`/api/questions/${questionId}`);
+			const data = await response.json();
+			const questionText = data.questionText || "What's your favorite book?";
+
+			// Store for later API calls
 			this.currentQuestion = questionText;
 
 			return {
@@ -121,16 +133,14 @@ class ContractAPI {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
-			// Simulate token approval without blockchain interaction
-			console.log(`Simulated: Approved ${amount} USDT`);
+			// Convert amount to wei (USDT has 6 decimals)
+			const amountInWei = ethers.utils.parseUnits(amount.toString(), 6);
 
-			// Simulate transaction delay for realism
-			await new Promise(resolve => setTimeout(resolve, 500));
+			// Approve tokens to be spent by the game contract
+			const tx = await this.tokenContract.approve(GAME_CONTRACT_ADDRESS, amountInWei);
+			await tx.wait();
 
-			return {
-				success: true,
-				tx: { hash: ethers.utils.id("approval" + Date.now()) }
-			};
+			return { success: true, tx };
 		} catch (error) {
 			console.error("Error approving tokens:", error);
 			return { success: false, error: error.message };
@@ -141,25 +151,22 @@ class ContractAPI {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
-			// In Python implementation, each game costs exactly 1 unit
-			const gameCost = GAME_COST;
+			// Convert amount to wei (USDT has 6 decimals)
+			const amountInWei = ethers.utils.parseUnits(amount.toString(), 6);
 
-			// Validate simulated balance
-			if (this.mockBalance < gameCost) {
-				throw new Error("Insufficient balance to play. You need at least 1 USDT.");
-			}
+			// Place bet on the contract
+			const tx = await this.gameContract.placeBet(amountInWei);
+			await tx.wait();
 
-			// Update simulated balance - deduct game cost
-			this.mockBalance -= gameCost;
-			console.log(`Simulated: Placed bet of ${gameCost} USDT. New balance: ${this.mockBalance}`);
-
-			// Simulate transaction delay for realism
-			await new Promise(resolve => setTimeout(resolve, 800));
+			// Get updated balance
+			const address = await this.signer.getAddress();
+			const balance = await this.tokenContract.balanceOf(address);
+			const formattedBalance = ethers.utils.formatUnits(balance, 6);
 
 			return {
 				success: true,
-				tx: { hash: ethers.utils.id("bet" + Date.now()) },
-				newBalance: this.mockBalance,
+				tx,
+				newBalance: parseFloat(formattedBalance),
 				consecutiveWins: this.consecutiveWins
 			};
 		} catch (error) {
@@ -172,16 +179,17 @@ class ContractAPI {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
-			// Simulate submitting answer to blockchain
+			// Hash the answer
 			const answerHash = ethers.utils.id(answer);
-			console.log("Simulated: Submitted answer with hash:", answerHash);
 
-			// Simulate transaction delay for realism
-			await new Promise(resolve => setTimeout(resolve, 1000));
+			// Submit answer to contract
+			const tx = await this.gameContract.submitAnswer(answerHash);
+			await tx.wait();
 
 			return {
 				success: true,
-				tx: { hash: ethers.utils.id("answer" + Date.now()) }
+				tx,
+				answerHash
 			};
 		} catch (error) {
 			console.error("Error submitting answer:", error);
@@ -189,14 +197,13 @@ class ContractAPI {
 		}
 	}
 
-	// Call the evaluation API to determine if the answer is a winner
+	// Bridge between API evaluation and blockchain
 	async simulateOracleResponse(questionId, answer) {
 		try {
 			// The real API call to evaluate the answer
 			console.log("Calling evaluation API...");
 
 			// Create conversation format expected by the API
-			// Match the Python format with system message
 			const conversationData = {
 				conversation: [
 					{
@@ -232,9 +239,14 @@ class ContractAPI {
 			console.log("API Response:", result);
 
 			// Determine if the answer is a winner based on the API response
-			// Using the same threshold as in Python: 0.5
 			const finalScore = result.final_score || 0;
 			const isWinner = finalScore >= WIN_THRESHOLD;
+
+			// In a real implementation, you would call a backend service here that would
+			// call the oracle.resolveWithWinner() function
+
+			// For this demo, we'll simulate the result and update our consecutive wins count
+			// This would typically happen on-chain in the real implementation
 
 			// Calculate winnings based on consecutive wins (match Python logic)
 			let winAmount = 0;
@@ -250,81 +262,57 @@ class ContractAPI {
 					winAmount = 50;
 				}
 
-				// Add winnings to balance
-				this.mockBalance += winAmount;
-				console.log(`Won! ${winAmount} USDT. New balance: ${this.mockBalance}. Consecutive wins: ${this.consecutiveWins}`);
+				// Here, in a full implementation, a backend service would call oracle.resolveWithWinner
+				// with the user's address to transfer the winnings on-chain
 			} else {
 				// Reset consecutive wins if lose
 				this.consecutiveWins = 0;
-				console.log(`Lost! Balance: ${this.mockBalance}. Consecutive wins reset.`);
 			}
+
+			// Get updated balance (after oracle would have resolved the game)
+			const address = await this.signer.getAddress();
+			const balance = await this.tokenContract.balanceOf(address);
+			const formattedBalance = ethers.utils.formatUnits(balance, 6);
 
 			return {
 				success: true,
 				isWinner,
 				winAmount,
-				consecutiveWins: this.consecutiveWins,
 				finalScore,
 				aiDetectionScore: result.ai_detection_score || 0,
 				coherenceScore: result.coherence_score || 0,
+				consecutiveWins: this.consecutiveWins,
 				apiResponse: result,
-				newBalance: this.mockBalance
+				newBalance: parseFloat(formattedBalance)
 			};
 		} catch (error) {
 			console.error("Error calling evaluation API:", error);
 
-			// Fallback to simulated response if API fails
-			console.log("Falling back to simulated evaluation...");
-
-			// Generate a random score between 0 and 1
-			const finalScore = Math.random();
-			const isWinner = finalScore >= WIN_THRESHOLD;
-
-			// Calculate winnings based on consecutive wins (match Python logic)
-			let winAmount = 0;
-
-			if (isWinner) {
-				this.consecutiveWins += 1;
-
-				if (this.consecutiveWins === 1) {
-					winAmount = 10;
-				} else if (this.consecutiveWins === 2) {
-					winAmount = 20;
-				} else { // 3 or more
-					winAmount = 50;
-				}
-
-				// Add winnings to balance
-				this.mockBalance += winAmount;
-				console.log(`Simulated fallback: Won! ${winAmount} USDT. New balance: ${this.mockBalance}. Consecutive wins: ${this.consecutiveWins}`);
-			} else {
-				// Reset consecutive wins if lose
-				this.consecutiveWins = 0;
-				console.log(`Simulated fallback: Lost! Balance: ${this.mockBalance}. Consecutive wins reset.`);
-			}
-
+			// More comprehensive error handling would be needed in a production app
 			return {
-				success: true,
-				isWinner,
-				winAmount,
-				finalScore,
-				aiDetectionScore: Math.random(),
-				coherenceScore: Math.random(),
-				consecutiveWins: this.consecutiveWins,
-				fallback: true,
-				error: error.message,
-				newBalance: this.mockBalance
+				success: false,
+				error: error.message
 			};
 		}
 	}
 
-	// Get current balance
 	async getBalance() {
-		return {
-			success: true,
-			balance: this.mockBalance,
-			consecutiveWins: this.consecutiveWins
-		};
+		if (!this.connected) return { success: false, error: "Wallet not connected" };
+
+		try {
+			const address = await this.signer.getAddress();
+			const balance = await this.tokenContract.balanceOf(address);
+			const formattedBalance = ethers.utils.formatUnits(balance, 6);
+
+			return {
+				success: true,
+				balance: parseFloat(formattedBalance),
+				consecutiveWins: this.consecutiveWins
+			};
+		} catch (error) {
+			console.error("Error getting balance:", error);
+			return { success: false, error: error.message };
+		}
 	}
 }
 
