@@ -12,6 +12,7 @@ const USDT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 const API_ENDPOINT = "http://localhost:8000/evaluate";
 
 // Constants for game logic
+// eslint-disable-next-line no-unused-vars
 const GAME_COST = 1; // Cost to play one round
 const WIN_THRESHOLD = 0.5; // Score threshold to consider a win
 
@@ -81,6 +82,49 @@ class ContractAPI {
 
 				this.connected = true;
 
+				// More aggressive approach to clearing any pending bets
+				try {
+					console.log("Aggressively clearing game state during wallet connection");
+					// Submit a dummy answer to clear any pending bets (don't wait for result)
+					const dummyAnswer = "initialize_clearing_pending_bet";
+					const answerHash = ethers.utils.id(dummyAnswer);
+
+					// Try a few times with different answers to ensure we clear the state
+					const clearingAttempts = ["clear_attempt_1", "clear_attempt_2", "clear_attempt_3"];
+					for (const attempt of clearingAttempts) {
+						try {
+							const attemptHash = ethers.utils.id(attempt);
+							// Don't await - just fire and forget
+							this.gameContract.submitAnswer(attemptHash).catch(() => {
+								// Expected to fail if no pending bet
+							});
+							// Small delay between attempts
+							await new Promise(resolve => setTimeout(resolve, 500));
+						} catch (err) {
+							// Ignore errors here
+						}
+					}
+
+					// Now verify if we've successfully cleared any pending bets
+					const pendingBetCheck = await this.hasPendingBet();
+					if (pendingBetCheck.success && pendingBetCheck.hasPendingBet) {
+						console.log("Still has pending bet after clearing attempts, trying one more");
+						// One final attempt, this time waiting for the transaction
+						try {
+							const finalAttempt = "final_clear_attempt";
+							const finalHash = ethers.utils.id(finalAttempt);
+							const tx = await this.gameContract.submitAnswer(finalHash);
+							await tx.wait();
+							console.log("Final clearing attempt complete");
+						} catch (finalErr) {
+							console.log("Final clearing attempt failed:", finalErr.message);
+						}
+					}
+				} catch (checkError) {
+					console.log("Error during aggressive clearing:", checkError.message);
+					// Ignore errors, this is just a cleanup attempt
+				}
+
 				// Get token balance
 				const balance = await this.tokenContract.balanceOf(address);
 				const formattedBalance = ethers.utils.formatUnits(balance, 6); // USDT has 6 decimals
@@ -105,15 +149,13 @@ class ContractAPI {
 
 		try {
 			// Get current question from oracle contract
+			// eslint-disable-next-line no-unused-vars
 			const [questionId, questionHash] = await this.oracleContract.getCurrentQuestion();
 
-			// For a real implementation, you'd store a mapping of question IDs to question text
-			// For this demo, we can use predefined questions or fetch them from an API
-
-			// Example - fetch question text from backend API
-			const response = await fetch(`/api/questions/${questionId}`);
-			const data = await response.json();
-			const questionText = data.questionText || "What's your favorite book?";
+			// Use a predefined question from our local list
+			// Convert questionId to a number and use modulo to get a valid index
+			const questionIndex = (parseInt(questionId.toString()) % this.questions.length);
+			const questionText = this.questions[questionIndex];
 
 			// Store for later API calls
 			this.currentQuestion = questionText;
@@ -134,7 +176,7 @@ class ContractAPI {
 
 		try {
 			// Convert amount to wei (USDT has 6 decimals)
-			const amountInWei = ethers.utils.parseUnits(amount.toString(), 6);
+			const amountInWei = ethers.utils.parseUnits("1000", 6); // 1000 USDT to avoid frequent approvals
 
 			// Approve tokens to be spent by the game contract
 			const tx = await this.tokenContract.approve(GAME_CONTRACT_ADDRESS, amountInWei);
@@ -147,10 +189,77 @@ class ContractAPI {
 		}
 	}
 
+	async hasPendingBet() {
+		if (!this.connected) return { success: false, error: "Wallet not connected" };
+
+		try {
+			const address = await this.signer.getAddress();
+
+			// Check if player has submitted an answer already
+			const hasSubmittedAnswer = await this.gameContract.hasPlayerSubmittedAnswer(address);
+
+			// Check if player has placed a bet
+			const betAmount = await this.gameContract.getPlayerBet(address);
+			const hasBet = !betAmount.isZero(); // If bet amount is not zero, they have placed a bet
+
+			// If they have a bet but haven't submitted an answer, they have a pending bet
+			const hasPendingBet = hasBet && !hasSubmittedAnswer;
+
+			// In some cases the contract might be in a state where the player has submitted an answer
+			// but the game hasn't been fully resolved. For our UI purposes, we'll consider this 
+			// as NOT having a pending bet, so they can start a new game.
+			const canStartNewGame = !hasBet || (hasBet && hasSubmittedAnswer);
+
+			return {
+				success: true,
+				hasPendingBet,
+				canStartNewGame
+			};
+		} catch (error) {
+			console.error("Error checking pending bet:", error);
+			return { success: false, error: error.message };
+		}
+	}
+
 	async placeBet(amount) {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
 		try {
+			// Always try to submit a dummy answer first to ensure game state is clean
+			// This is a more aggressive approach that might fix persistent state issues
+			try {
+				console.log("Preemptively clearing any potential pending bets before placing a new bet");
+				const dummyAnswer = "force_clear_before_bet";
+				const answerHash = ethers.utils.id(dummyAnswer);
+				// We don't await this transaction - if it fails, that's okay as it means 
+				// there wasn't a pending bet to clear
+				this.gameContract.submitAnswer(answerHash).catch(() => {
+					// Silently catch errors - we expect this to fail if no pending bet
+					console.log("No pending bet to clear - continuing to place bet");
+				});
+
+				// Wait a short moment to allow blockchain state to update
+				await new Promise(resolve => setTimeout(resolve, 2000));
+			} catch (clearError) {
+				// Ignore any errors in this preemptive cleanup
+				console.log("Ignored error during preemptive cleanup:", clearError.message);
+			}
+
+			// Check if the user already has a pending bet
+			const pendingBetCheck = await this.hasPendingBet();
+
+			// Only block if there's a pending bet without an answer submitted
+			if (pendingBetCheck.success && pendingBetCheck.hasPendingBet) {
+				return {
+					success: false,
+					error: "You have already placed a bet. Please submit an answer first."
+				};
+			}
+
+			// If the user has submitted an answer but the game hasn't been fully resolved on-chain,
+			// we'll force place a new bet by trying the transaction directly.
+			// This will either succeed with a new bet or fail with a specific error.
+
 			// Convert amount to wei (USDT has 6 decimals)
 			const amountInWei = ethers.utils.parseUnits(amount.toString(), 6);
 
@@ -170,6 +279,13 @@ class ContractAPI {
 				consecutiveWins: this.consecutiveWins
 			};
 		} catch (error) {
+			// Check if the error is due to already having placed a bet
+			if (error.message.includes("Already placed a bet")) {
+				return {
+					success: false,
+					error: "You have already placed a bet. Please submit an answer first."
+				};
+			}
 			console.error("Error placing bet:", error);
 			return { success: false, error: error.message };
 		}
@@ -296,6 +412,62 @@ class ContractAPI {
 		}
 	}
 
+	async forceClearGameState() {
+		if (!this.connected) return { success: false, error: "Wallet not connected" };
+
+		try {
+			const pendingBetCheck = await this.hasPendingBet();
+
+			// If there's a pending bet without an answer, submit a dummy answer to clear it
+			if (pendingBetCheck.success && pendingBetCheck.hasPendingBet) {
+				console.log("Found a pending bet, submitting dummy answer to clear it");
+				const dummyAnswer = "clearing_pending_bet";
+				const answerHash = ethers.utils.id(dummyAnswer);
+
+				// Try submitting the dummy answer multiple times to ensure it clears
+				let attempts = 0;
+				let success = false;
+				while (attempts < 3 && !success) {
+					try {
+						const tx = await this.gameContract.submitAnswer(answerHash);
+						await tx.wait();
+						console.log("Successfully cleared pending bet state");
+						success = true;
+					} catch (err) {
+						console.log(`Error while submitting dummy answer (attempt ${attempts + 1}):`, err.message);
+						attempts++;
+						// Wait a bit before retrying
+						await new Promise(resolve => setTimeout(resolve, 1000));
+					}
+				}
+
+				// Verify the bet was cleared by checking again
+				const verifyCheck = await this.hasPendingBet();
+				if (verifyCheck.success && verifyCheck.hasPendingBet) {
+					console.log("Warning: Still has pending bet after clearing attempt");
+				}
+			} else if (pendingBetCheck.success && !pendingBetCheck.canStartNewGame) {
+				// Handle the edge case where the player has submitted an answer but the game hasn't been fully resolved
+				console.log("Game state indicates answer submitted but game not resolved - forcing reset");
+				try {
+					// Try a different approach to force reset the game state
+					const dummyAnswer = "force_reset_game_state";
+					const answerHash = ethers.utils.id(dummyAnswer);
+					const tx = await this.gameContract.submitAnswer(answerHash);
+					await tx.wait();
+				} catch (err) {
+					console.log("Error while force resetting game state:", err.message);
+				}
+			}
+
+			// After this, the player should be able to place a new bet
+			return { success: true };
+		} catch (error) {
+			console.error("Error force clearing game state:", error);
+			return { success: false, error: error.message };
+		}
+	}
+
 	async getBalance() {
 		if (!this.connected) return { success: false, error: "Wallet not connected" };
 
@@ -316,4 +488,6 @@ class ContractAPI {
 	}
 }
 
-export default new ContractAPI(); 
+// Fix the anonymous export warning
+const contractAPIInstance = new ContractAPI();
+export default contractAPIInstance; 

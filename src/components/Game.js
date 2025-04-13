@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import contractAPI from '../contractAPI';
 
 const Game = ({ walletAddress, onWalletChange }) => {
@@ -12,6 +12,73 @@ const Game = ({ walletAddress, onWalletChange }) => {
 	const [consecutiveWins, setConsecutiveWins] = useState(0);
 	const [apiDetails, setApiDetails] = useState(null);
 	const timerRef = useRef(null);
+
+	// Define submitAnswer first - note we're moving this up before handleTimeUp
+	const submitAnswer = useCallback(async () => {
+		setError('');
+
+		try {
+			// Submit answer to blockchain (simulated)
+			const submitResult = await contractAPI.submitAnswer(answer);
+			if (!submitResult.success) {
+				throw new Error(`Failed to submit answer: ${submitResult.error}`);
+			}
+
+			// Call the API to evaluate the answer
+			const oracleResult = await contractAPI.simulateOracleResponse(
+				question?.questionId,
+				answer
+			);
+
+			// Update balance and consecutive wins
+			setBalance(oracleResult.newBalance);
+			setConsecutiveWins(oracleResult.consecutiveWins);
+
+			// Store API details for display
+			if (oracleResult.apiResponse) {
+				setApiDetails(oracleResult.apiResponse);
+			}
+
+			setResult(oracleResult);
+			setGameState('RESULT');
+		} catch (err) {
+			setError(err.message);
+			setGameState('READY');
+		}
+	}, [answer, question, setBalance, setConsecutiveWins, setApiDetails, setResult, setGameState, setError]);
+
+	// Now define handleTimeUp after submitAnswer is defined
+	const handleTimeUp = useCallback(async () => {
+		if (timerRef.current) {
+			clearInterval(timerRef.current);
+		}
+
+		if (answer.trim() === '') {
+			// If no answer provided, player loses but we still need to submit an answer
+			// to clear the game state in the contract
+			setResult({
+				success: false,
+				isWinner: false,
+				message: "TIME'S UP! TOO SLOW!",
+				consecutiveWins: 0
+			});
+			setConsecutiveWins(0); // Reset consecutive wins
+
+			// Submit a dummy answer to clear the game state
+			try {
+				await contractAPI.submitAnswer("no_answer_time_up");
+			} catch (err) {
+				console.error("Error submitting timeout answer:", err);
+				// We can ignore this error as we're already handling the timeout
+			}
+
+			setGameState('RESULT');
+			return;
+		}
+
+		setGameState('ANSWER');
+		submitAnswer();
+	}, [answer, submitAnswer, setResult, setConsecutiveWins, setGameState]);
 
 	useEffect(() => {
 		// Initialize simulated wallet automatically
@@ -29,13 +96,25 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		if (timer === 0) {
 			handleTimeUp();
 		}
-	}, [timer]);
+	}, [timer, handleTimeUp]);
 
 	const initializeWallet = async () => {
 		const walletResult = await contractAPI.connectWallet();
 		if (walletResult.success) {
 			setBalance(walletResult.balance);
 			setConsecutiveWins(walletResult.consecutiveWins || 0);
+
+			// Check for pending bets on wallet initialization and try to clear
+			try {
+				const pendingBetCheck = await contractAPI.hasPendingBet();
+				if (pendingBetCheck.success && pendingBetCheck.hasPendingBet) {
+					console.log("Found pending bet on wallet initialization, attempting to clear");
+					await contractAPI.forceClearGameState();
+				}
+			} catch (err) {
+				console.error("Error checking for pending bets during wallet initialization:", err);
+				// We can ignore this error as it's just a preemptive cleanup attempt
+			}
 		}
 	};
 
@@ -49,10 +128,83 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				throw new Error(`Insufficient balance. You need at least 1 USDT to play.`);
 			}
 
+			// Add a short loading delay to make sure the blockchain has time to process any pending transactions
+			await new Promise(resolve => setTimeout(resolve, 2000));
+
+			// Forcefully attempt to submit a direct dummy answer to clear any pending bets
+			// This is the most aggressive approach and should clear the state definitively
+			try {
+				console.log("Directly submitting dummy answer before game start");
+				await contractAPI.submitAnswer("direct_clear_before_game_start");
+				// Wait for the transaction to be processed
+				await new Promise(resolve => setTimeout(resolve, 2000));
+			} catch (directClearError) {
+				console.log("Direct clear attempt result:", directClearError.message);
+				// We expect this to fail if there's no pending bet, which is fine
+			}
+
+			// First try to clear any pending game state - try up to 2 times
+			let clearStateResult = await contractAPI.forceClearGameState();
+			if (!clearStateResult.success) {
+				console.log("First attempt to clear game state failed, trying again...");
+				// Wait a moment and try again
+				await new Promise(resolve => setTimeout(resolve, 1000));
+				clearStateResult = await contractAPI.forceClearGameState();
+			}
+
+			// Check if user already has a pending bet or can start a new game
+			const pendingBetCheck = await contractAPI.hasPendingBet();
+
+			if (pendingBetCheck.success) {
+				// If user has a pending bet, continue that game
+				if (pendingBetCheck.hasPendingBet) {
+					console.log("User has a pending bet, continuing that game");
+					setGameState('QUESTION');
+
+					// Get current question
+					const questionResult = await contractAPI.getCurrentQuestion();
+					if (questionResult.success) {
+						setQuestion(questionResult);
+
+						// Start timer
+						setTimer(15);
+						timerRef.current = setInterval(() => {
+							setTimer(prevTimer => prevTimer - 1);
+						}, 1000);
+
+						return; // Exit early since we already have a bet placed
+					}
+				}
+				// Otherwise user can place a new bet, so continue with the normal flow
+			}
+
+			// First approve tokens for the game contract
+			const approvalResult = await contractAPI.approveTokens(1);
+			if (!approvalResult.success) {
+				throw new Error(`Failed to approve tokens: ${approvalResult.error}`);
+			}
+
 			// Place bet (always costs 1 USDT)
 			const betResult = await contractAPI.placeBet(1);
 			if (!betResult.success) {
-				throw new Error(`Failed to place bet: ${betResult.error}`);
+				// If we still get the error about already having placed a bet,
+				// one more forceful attempt to clear game state
+				if (betResult.error && betResult.error.includes("already placed a bet")) {
+					console.log("Final attempt to clear pending bet...");
+					await contractAPI.forceClearGameState();
+					// Try placing bet one more time
+					const retryBetResult = await contractAPI.placeBet(1);
+					if (!retryBetResult.success) {
+						throw new Error(`Failed to place bet: ${retryBetResult.error}`);
+					} else {
+						// Updated bet result if the retry succeeded
+						betResult.success = retryBetResult.success;
+						betResult.newBalance = retryBetResult.newBalance;
+						betResult.consecutiveWins = retryBetResult.consecutiveWins;
+					}
+				} else {
+					throw new Error(`Failed to place bet: ${betResult.error}`);
+				}
 			}
 
 			// Update balance
@@ -78,28 +230,6 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		}
 	};
 
-	const handleTimeUp = () => {
-		if (timerRef.current) {
-			clearInterval(timerRef.current);
-		}
-
-		if (answer.trim() === '') {
-			// If no answer provided, player loses
-			setResult({
-				success: false,
-				isWinner: false,
-				message: "TIME'S UP! TOO SLOW!",
-				consecutiveWins: 0
-			});
-			setConsecutiveWins(0); // Reset consecutive wins
-			setGameState('RESULT');
-			return;
-		}
-
-		setGameState('ANSWER');
-		submitAnswer();
-	};
-
 	const handleSubmit = () => {
 		// Clear timer
 		if (timerRef.current) {
@@ -118,40 +248,15 @@ const Game = ({ walletAddress, onWalletChange }) => {
 		submitAnswer();
 	};
 
-	const submitAnswer = async () => {
-		setError('');
-
+	const resetGame = async () => {
+		// Try to clear the game state in the smart contract
 		try {
-			// Submit answer to blockchain (simulated)
-			const submitResult = await contractAPI.submitAnswer(answer);
-			if (!submitResult.success) {
-				throw new Error(`Failed to submit answer: ${submitResult.error}`);
-			}
-
-			// Call the API to evaluate the answer
-			const oracleResult = await contractAPI.simulateOracleResponse(
-				question.questionId,
-				answer
-			);
-
-			// Update balance and consecutive wins
-			setBalance(oracleResult.newBalance);
-			setConsecutiveWins(oracleResult.consecutiveWins);
-
-			// Store API details for display
-			if (oracleResult.apiResponse) {
-				setApiDetails(oracleResult.apiResponse);
-			}
-
-			setResult(oracleResult);
-			setGameState('RESULT');
+			await contractAPI.forceClearGameState();
 		} catch (err) {
-			setError(err.message);
-			setGameState('READY');
+			console.error("Error resetting game state:", err);
+			// Continue even if this fails
 		}
-	};
 
-	const resetGame = () => {
 		if (balance <= 0) {
 			// Game over if no money left
 			setGameState('GAME_OVER');
@@ -191,7 +296,7 @@ const Game = ({ walletAddress, onWalletChange }) => {
 				</ol>
 			</div>
 			<button
-				className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded"
+				className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded w-full mb-2"
 				onClick={startGame}
 				disabled={balance < 1}
 			>
@@ -200,6 +305,50 @@ const Game = ({ walletAddress, onWalletChange }) => {
 			{balance < 1 && (
 				<p className="text-red-500 mt-2 text-sm">Insufficient balance to play</p>
 			)}
+
+			{/* Add reset game state button */}
+			<div className="mt-4 w-full border-t border-gray-200 pt-4">
+				<p className="text-sm text-gray-500 mb-2">Having trouble starting a game? Try resetting the game state:</p>
+				<button
+					className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded w-full"
+					onClick={async () => {
+						try {
+							// Show that we're working
+							setError("Resetting game state, please wait...");
+
+							// Attempt a complete game state reset with multiple techniques
+							// 1. Try multiple direct answer submissions
+							for (let i = 0; i < 3; i++) {
+								try {
+									await contractAPI.submitAnswer(`emergency_reset_${i}`);
+									await new Promise(resolve => setTimeout(resolve, 1000));
+								} catch (err) {
+									// Expected to fail if no pending bet
+								}
+							}
+
+							// 2. Use the forceClearGameState method
+							await contractAPI.forceClearGameState();
+
+							// 3. Wait and check balance to refresh state
+							await new Promise(resolve => setTimeout(resolve, 2000));
+							const balanceResult = await contractAPI.getBalance();
+							if (balanceResult.success) {
+								setBalance(balanceResult.balance);
+							}
+
+							setError("Game state reset complete. Try starting the game now.");
+
+							// Clear error after 3 seconds
+							setTimeout(() => setError(""), 3000);
+						} catch (err) {
+							setError(`Reset failed: ${err.message}`);
+						}
+					}}
+				>
+					Reset Game State
+				</button>
+			</div>
 		</div>
 	);
 
